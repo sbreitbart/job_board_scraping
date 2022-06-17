@@ -4,8 +4,10 @@
 
 # Setup
 # install.packages("rvest")
-library('rvest')
-
+library(rvest)
+library(tidyverse)
+library(stringr)
+library(flextable)
 
 ####################################################################
 # ECOLOG Trial: pausing because it requires a password to enter forum
@@ -44,32 +46,100 @@ library('rvest')
 url <- 'https://wfscjobs.tamu.edu/?job_category=full-time-positions'
 url2 <- 'https://wfscjobs.tamu.edu/?job_category=post-doctoral-appointments'
 
-#Reading the HTML code from the website
+# Reading the HTML code from the website
 webpage <- read_html(url)
 webpage2 <- read_html(url2)
 
-#Using CSS selectors to scrape the rankings section
+# Using CSS selectors to scrape the relevant section
 job_data_html <- html_nodes(webpage,
-                             '.job-title')
+                             '.job-title, .job-posted-date')
 
 postdoc_data_html <- html_nodes(webpage2,
-                            '.job-title')
+                            '.job-title, .job-posted-date')
 
-#Converting the ranking data to text
+# JOBS-----
+# Converting the data to text
 job_data <- html_text(job_data_html) %>%
-   as.list()
+   as.data.frame()
 
+# Get posting dates and save as separate df
+job_dates <- job_data %>%
+  slice(which(row_number() %% 2 == 0)) %>%
+  tibble::rowid_to_column("ID")
+
+# remove posting dates from original df
+job_data %<>%
+  slice(which(row_number() %% 2 == 1))%>%
+  tibble::rowid_to_column("ID")
+
+# join job descriptions and posting dates
+job_data <- right_join(job_data, job_dates,
+              by = "ID") %>%
+  dplyr::rename(Position = 2,
+                Date = 3) %>%
+  dplyr::mutate(Level = "Job")
+
+
+# POSTDOCS-----
+# Converting the data to text
 postdoc_data <- html_text(postdoc_data_html) %>%
-  as.list()
+  as.data.frame()
 
-library(stringr)
+# Get posting dates and save as separate df
+postdoc_dates <- postdoc_data %>%
+  slice(which(row_number() %% 2 == 0)) %>%
+  tibble::rowid_to_column("ID")
 
-ds_jobs <- do.call(rbind.data.frame, job_data) %>%
-  dplyr::rename(Position = 1) %>%
-  filter(str_detect(Position,
-                    'Data|data|Quant|quant| R '))
+# remove posting dates from original df
+postdoc_data %<>%
+  slice(which(row_number() %% 2 == 1))%>%
+  tibble::rowid_to_column("ID")
 
-ds_postdocs <- do.call(rbind.data.frame, postdoc_data) %>%
-  dplyr::rename(Position = 1) %>%
-  filter(str_detect(Position,
-                    'Data|data|Quant|quant| R '))
+# join job descriptions and posting dates
+postdoc_data <- right_join(postdoc_data, postdoc_dates,
+                       by = "ID") %>%
+  dplyr::rename(Position = 2,
+                Date = 3) %>%
+  dplyr::mutate(Level = "Postdoc")
+
+
+# Merge into one df
+ds_opps <- rbind(job_data,
+                 postdoc_data) %>%
+  
+  # select relevant posts
+  dplyr::filter( 
+         grepl('data|quant| R |model|urban',
+               Position,
+         ignore.case = TRUE)) %>%
+  
+  # create new columns listing if keyword has been detected
+  mutate(keyword_Data = case_when(grepl("data", 
+                                ignore.case = TRUE,
+                                Position) ~ "yes",
+                           TRUE ~ " ")) %>%
+  mutate(keyword_Quant = case_when(grepl("quant",
+                                ignore.case = TRUE,
+                                Position) ~ "yes",
+                          TRUE ~ " ")) %>%
+  mutate(keyword_R = case_when(grepl(" r ",
+                                ignore.case = TRUE,
+                                Position) ~ "yes",
+                          TRUE ~ " ")) %>%
+  mutate(keyword_Model = case_when(grepl("model",
+                                ignore.case = TRUE,
+                                Position) ~ "yes",
+                          TRUE ~ " "))%>%
+  mutate(keyword_Urban = case_when(grepl("urban",
+                                ignore.case = TRUE,
+                                Position) ~ "yes",
+                          TRUE ~ " ")) %>%
+  arrange(ID)
+
+
+
+flextable(ds_opps) %>%
+  autofit() %>%
+  save_as_html(
+  "Potential_jobs_postdocs",
+  path = "Jobs_postdocs.html")
